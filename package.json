@@ -1,0 +1,40 @@
+{
+  "name": "dsh-log-viewer",
+  "version": "0.1.0",
+  "description": "DSH 日志分析插件：选择本机 Java 服务文本日志，分析 ERROR/异常堆栈，提供 AI 工具与 Web 仪表盘",
+  "type": "module",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "skills",
+    "ui",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-host-webserver": "*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CodeDice1024/dsh-log-viewer.git"
+  },
+  "homepage": "https://github.com/CodeDice1024/dsh-log-viewer#readme",
+  "bugs": {
+    "url": "https://github.com/CodeDice1024/dsh-log-viewer/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "log-viewer",
+    "java",
+    "spring-boot",
+    "logback",
+    "log-analysis",
+    "log4j"
+  ]
+}
