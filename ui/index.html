@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DSH Log Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+  <style>
+    /* ---- Reset & Base ---- */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #58a6ff;
+    }
+    .header .subtitle {
+      font-size: 13px;
+      color: #8b949e;
+    }
+
+    /* ---- Upload Area (compact) ---- */
+    .upload-area {
+      border: 1px dashed #30363d;
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 16px;
+      background: #161b22;
+    }
+    .upload-area:hover, .upload-area.dragover {
+      border-color: #58a6ff;
+      background: #1a2332;
+    }
+    .upload-area .icon { font-size: 18px; line-height: 1; }
+    .upload-area .text { font-size: 13px; color: #c9d1d9; }
+    .upload-area .hint { font-size: 12px; color: #484f58; }
+    .upload-area .grow { flex: 1; min-width: 160px; }
+    #pickBtn, #aiAnalyzeBtn, #repickBtn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #pickBtn, #repickBtn { background: #58a6ff; color: #fff; }
+    #aiAnalyzeBtn {
+      background: #238636;
+      color: #fff;
+    }
+    #aiAnalyzeBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    #fileInput { display: none; }
+
+    .ai-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    .ai-panel h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ai-panel .badge {
+      font-size: 11px;
+      background: #30363d;
+      color: #8b949e;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .ai-panel .badge.llm { background: #23863655; color: #3fb950; }
+    .ai-panel .badge.rules { background: #d2992233; color: #d29922; }
+    #aiReport {
+      white-space: pre-wrap;
+      font-size: 13px;
+      line-height: 1.65;
+      color: #e1e4e8;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+    #aiStatus { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+
+    /* ---- Summary Cards ---- */
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card .label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+    .card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+    .card .value.error { color: #f85149; }
+    .card .value.warn { color: #d29922; }
+    .card .value.info { color: #58a6ff; }
+    .card .value.success { color: #3fb950; }
+    .card .extra { font-size: 11px; color: #484f58; margin-top: 4px; }
+
+    /* ---- Grid Layout ---- */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* ---- Panel ---- */
+    .panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      padding: 20px;
+      overflow: hidden;
+    }
+    .panel h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #c9d1d9;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel h2 .badge {
+      font-size: 11px;
+      background: #30363d;
+      color: #8b949e;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* ---- Chart Container ---- */
+    .chart-container {
+      position: relative;
+      height: 260px;
+    }
+
+    /* ---- Exception List ---- */
+    .exception-list { list-style: none; }
+    .exception-item {
+      padding: 10px 0;
+      border-bottom: 1px solid #21262d;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .exception-item:last-child { border-bottom: none; }
+    .exception-item .class-name {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: #f85149;
+      word-break: break-all;
+      flex: 1;
+    }
+    .exception-item .count-badge {
+      background: #f8514933;
+      color: #f85149;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+      margin-left: 12px;
+    }
+    .exception-item .sample {
+      font-size: 12px;
+      color: #8b949e;
+      margin-top: 4px;
+    }
+
+    /* ---- Level Distribution ---- */
+    .level-bars { list-style: none; }
+    .level-bar-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 0;
+    }
+    .level-label {
+      font-family: monospace;
+      font-size: 12px;
+      font-weight: 600;
+      width: 52px;
+      text-align: right;
+    }
+    .level-bar-track {
+      flex: 1;
+      height: 18px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .level-bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+    .level-count {
+      font-size: 12px;
+      color: #8b949e;
+      width: 50px;
+    }
+
+    /* ---- Raw Log Viewer ---- */
+    .log-viewer-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .log-viewer-controls input,
+    .log-viewer-controls select {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .log-viewer-controls input:focus,
+    .log-viewer-controls select:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+    .log-viewer-controls input { flex: 1; min-width: 160px; }
+    .log-viewer {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 500px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; padding: 1px 0; }
+    .log-line:hover { background: #1a2332; }
+    .log-line .ts { color: #8b949e; }
+    .log-line .thread { color: #79c0ff; }
+    .log-line .level-TRACE { color: #484f58; }
+    .log-line .level-DEBUG { color: #7ee787; }
+    .log-line .level-INFO { color: #58a6ff; }
+    .log-line .level-WARN { color: #d29922; }
+    .log-line .level-ERROR { color: #f85149; font-weight: 600; }
+    .log-line .level-FATAL { color: #f85149; font-weight: 700; text-decoration: underline; }
+    .log-line .logger { color: #bc8cff; }
+    .log-line .msg { color: #e1e4e8; }
+    .log-line.stacktrace { color: #8b949e; padding-left: 16px; }
+    .log-line.highlight { background: #d2992233; }
+
+    /* ---- Empty State ---- */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #484f58;
+    }
+    .empty-state .icon { font-size: 64px; margin-bottom: 16px; }
+    .empty-state .text { font-size: 15px; }
+
+    /* ---- Hidden ---- */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>Java 日志分析</h1>
+      <div class="subtitle">解析 ERROR / 异常堆栈，并可一键 AI 研判</div>
+    </div>
+  </div>
+
+  <!-- Upload (compact) -->
+  <div id="uploadArea" class="upload-area">
+    <div class="icon">📄</div>
+    <div class="grow">
+      <div class="text" id="uploadText">选择或拖入本机 Java 日志（.log / .txt）</div>
+      <div class="hint" id="fileName">支持 Logback / Log4j 文本；大文件解析可能需几秒</div>
+    </div>
+    <button type="button" id="pickBtn">选择文件</button>
+    <button type="button" id="aiAnalyzeBtn" disabled title="先选择并解析日志">AI 分析异常</button>
+    <input type="file" id="fileInput" accept=".log,.txt,.out,text/plain" />
+  </div>
+
+  <!-- Dashboard (hidden until file loaded) -->
+  <div id="dashboard" class="hidden">
+
+    <div id="aiPanel" class="ai-panel hidden">
+      <h2>AI 异常分析 <span class="badge" id="aiSourceBadge"></span></h2>
+      <div id="aiStatus"></div>
+      <div id="aiReport"></div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-cards">
+      <div class="card">
+        <div class="label">总条目数</div>
+        <div class="value info" id="totalCount">—</div>
+        <div class="extra" id="timeRange"></div>
+      </div>
+      <div class="card">
+        <div class="label">ERROR</div>
+        <div class="value error" id="errorCount">—</div>
+        <div class="extra" id="errorPct"></div>
+      </div>
+      <div class="card">
+        <div class="label">WARN</div>
+        <div class="value warn" id="warnCount">—</div>
+        <div class="extra" id="warnPct"></div>
+      </div>
+      <div class="card">
+        <div class="label">异常种类</div>
+        <div class="value error" id="exceptionTypes">—</div>
+        <div class="extra" id="exceptionTotal"></div>
+      </div>
+      <div class="card">
+        <div class="label">时间跨度</div>
+        <div class="value success" id="duration">—</div>
+        <div class="extra" id="durationDetail"></div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid-2">
+      <!-- Error Timeline -->
+      <div class="panel">
+        <h2>错误频率时间线 <span class="badge">按分钟</span></h2>
+        <div class="chart-container">
+          <canvas id="timelineChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Level Distribution -->
+      <div class="panel">
+        <h2>日志级别分布</h2>
+        <ul class="level-bars" id="levelBars"></ul>
+      </div>
+    </div>
+
+    <!-- Exceptions & Threads -->
+    <div class="grid-2">
+      <!-- Top Exceptions -->
+      <div class="panel">
+        <h2>Top 异常 <span class="badge" id="exceptionBadge"></span></h2>
+        <ul class="exception-list" id="exceptionList"></ul>
+      </div>
+
+      <!-- Thread Distribution -->
+      <div class="panel">
+        <h2>线程类型分布</h2>
+        <div class="chart-container">
+          <canvas id="threadChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Raw Log Viewer -->
+    <div class="panel" style="margin-top: 20px;">
+      <h2>原始日志浏览 <span class="badge" id="logBadge"></span></h2>
+      <div class="log-viewer-controls">
+        <input type="text" id="logSearch" placeholder="搜索关键字..." />
+        <select id="logLevelFilter">
+          <option value="">全部级别</option>
+          <option value="TRACE">TRACE</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARN">WARN</option>
+          <option value="ERROR">ERROR</option>
+          <option value="FATAL">FATAL</option>
+        </select>
+      </div>
+      <div class="log-viewer" id="logViewer"></div>
+    </div>
+  </div>
+
+  <!-- Empty State -->
+  <div id="emptyState" class="empty-state hidden">
+    <div class="icon">&#128270;</div>
+    <div class="text">未解析到有效日志行。请确认是 Java 服务文本日志（含时间戳、级别、[线程]、Logger）。</div>
+  </div>
+
+  <script>
+    // ============================================================
+    // 全局变量
+    // ============================================================
+    let parsedEntries = [];
+    let lastStats = null;
+    let lastFileName = '';
+    let timelineChartInstance = null;
+    let threadChartInstance = null;
+
+    // ============================================================
+    // 日志解析（前端版）
+    // ============================================================
+    const TS = '(\\d{4}-\\d{2}-\\d{2}[\\sT]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,3})?)';
+    const LEVEL = '(TRACE|DEBUG|INFO|WARN|ERROR|FATAL)';
+    const THREAD = '\\[([^\\]]+)\\]';
+    const LOGGER = '(\\S+?)(?::\\s*(\\d+))?(?:\\s+\\[[^\\]]+\\])*';
+    const MSG = '(.*)';
+    const PATTERNS = [
+      new RegExp('^' + TS + '\\s+' + THREAD + '\\s+' + LEVEL + '\\s+' + LOGGER + '\\s*-\\s*' + MSG + '$'),
+      new RegExp('^' + TS + '\\s+' + LEVEL + '\\s+' + THREAD + '\\s+' + LOGGER + '\\s*-\\s*' + MSG + '$'),
+    ];
+    const THREAD_PATTERNS = [
+      { re: /^xxl-job/i, type: 'xxl-job' },
+      { re: /^pool-\d+-thread-\d+$/, type: 'pool-thread' },
+      { re: /^wr-org-\d+/, type: 'worker-thread' },
+      { re: /^http-nio/i, type: 'http-nio' },
+      { re: /^main$/, type: 'main' },
+      { re: /^scheduling-\d+/i, type: 'scheduler' },
+      { re: /^@Async|task-\d+/i, type: 'async' },
+    ];
+
+    function classifyThread(thread) {
+      for (const p of THREAD_PATTERNS) {
+        if (p.re.test(thread)) return p.type;
+      }
+      return 'unknown';
+    }
+
+    function detectException(line) {
+      const caused = /^Caused by:\s+([\w.$]+)(?::\s*(.*))?$/.exec(line.trim());
+      if (caused) return { className: caused[1], message: caused[2] || null };
+      const nested = /(?:^|[\s;])(?:nested\s+)?exception\s+is\s+([\w.$]+(?:Exception|Error))(?::\s*(.*))?/i.exec(line.trim());
+      if (nested) return { className: nested[1], message: nested[2] || null };
+      const top = /^([\w.$]+(?:Exception|Error))(?::\s*(.*))?$/.exec(line.trim());
+      if (top) return { className: top[1], message: top[2] || null };
+      const inline = /(?:^|[\s;:])((?:[a-z][a-z0-9_]*\.)+[A-Z][\w$]*(?:Exception|Error)|[A-Z][\w$]*(?:Exception|Error))(?::\s*([^\n]*))?/.exec(line.trim());
+      if (inline) return { className: inline[1], message: inline[2] || null };
+      return null;
+    }
+
+    function applyExc(cur, text) {
+      const d = detectException(text);
+      if (!d) return;
+      cur.isException = true;
+      if (!cur.exceptionClass) {
+        cur.exceptionClass = d.className;
+        cur.exceptionMessage = d.message;
+      }
+    }
+
+    function matchLine(line) {
+      for (let i = 0; i < PATTERNS.length; i++) {
+        const m = PATTERNS[i].exec(line);
+        if (m) return { m, kind: i };
+      }
+      return null;
+    }
+
+    function parseLog(raw) {
+      const lines = raw.split(/\r?\n/);
+      const entries = [];
+      let cur = null;
+
+      for (const line of lines) {
+        const hit = matchLine(line);
+        if (hit) {
+          if (cur) entries.push(cur);
+          const { m, kind } = hit;
+          const timestamp = m[1];
+          const thread = kind === 1 ? m[3] : m[2];
+          const level = kind === 1 ? m[2] : m[3];
+          const logger = m[4];
+          const lineNo = m[5] || '';
+          const message = m[6];
+          cur = {
+            timestamp, thread, level, logger, lineNo, message,
+            fullMessage: line, threadType: classifyThread(thread),
+            isException: false, exceptionClass: null, exceptionMessage: null,
+          };
+          applyExc(cur, message);
+          continue;
+        }
+        if (cur) {
+          cur.fullMessage += '\n' + line;
+          if (/^\s+at\s+/.test(line) || /^\s*\.\.\.\s+\d+\s+more/.test(line)) cur.isException = true;
+          applyExc(cur, line);
+        }
+      }
+      if (cur) entries.push(cur);
+      return entries;
+    }
+
+    // ============================================================
+    // 分析
+    // ============================================================
+    function analyze(entries) {
+      const levels = {};
+      const threads = {};
+      const excMap = new Map();
+      const errorTimeline = new Map();
+      let startDate = null, endDate = null;
+
+      for (const e of entries) {
+        levels[e.level] = (levels[e.level] || 0) + 1;
+        threads[e.threadType] = (threads[e.threadType] || 0) + 1;
+
+        if (e.exceptionClass) {
+          const ex = excMap.get(e.exceptionClass) || { count: 0, sample: e.exceptionMessage || e.message };
+          ex.count++;
+          excMap.set(e.exceptionClass, ex);
+        }
+
+        if (e.level === 'ERROR' || e.level === 'FATAL') {
+          try {
+            const d = new Date(e.timestamp.replace(' ', 'T'));
+            if (!isNaN(d)) {
+              const min = d.toISOString().slice(0, 16);
+              errorTimeline.set(min, (errorTimeline.get(min) || 0) + 1);
+            }
+            if (!startDate || d < startDate) startDate = d;
+            if (!endDate || d > endDate) endDate = d;
+          } catch {}
+        }
+
+        try {
+          const d = new Date(e.timestamp.replace(' ', 'T'));
+          if (!isNaN(d)) {
+            if (!startDate || d < startDate) startDate = d;
+            if (!endDate || d > endDate) endDate = d;
+          }
+        } catch {}
+      }
+
+      const topExceptions = [...excMap.entries()]
+        .map(([cls, { count, sample }]) => ({ className: cls, count, sample }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20);
+
+      const timeline = [...errorTimeline.entries()]
+        .map(([minute, count]) => ({ minute, count }))
+        .sort((a, b) => a.minute.localeCompare(b.minute));
+
+      const durationMs = startDate && endDate ? endDate - startDate : null;
+
+      return { total: entries.length, levels, threads, topExceptions, timeline, durationMs, startDate, endDate };
+    }
+
+    // ============================================================
+    // 渲染
+    // ============================================================
+    function renderDashboard(entries) {
+      const stats = analyze(entries);
+      if (stats.total === 0) {
+        document.getElementById('dashboard').classList.add('hidden');
+        document.getElementById('emptyState').classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('dashboard').classList.remove('hidden');
+      document.getElementById('emptyState').classList.add('hidden');
+
+      // Summary cards
+      document.getElementById('totalCount').textContent = stats.total.toLocaleString();
+      const errCount = (stats.levels['ERROR'] || 0) + (stats.levels['FATAL'] || 0);
+      document.getElementById('errorCount').textContent = errCount.toLocaleString();
+      document.getElementById('errorPct').textContent = stats.total > 0 ? `占比 ${((errCount / stats.total) * 100).toFixed(1)}%` : '';
+      const warnCount = stats.levels['WARN'] || 0;
+      document.getElementById('warnCount').textContent = warnCount.toLocaleString();
+      document.getElementById('warnPct').textContent = stats.total > 0 ? `占比 ${((warnCount / stats.total) * 100).toFixed(1)}%` : '';
+      document.getElementById('exceptionTypes').textContent = stats.topExceptions.length;
+      const totalExc = stats.topExceptions.reduce((s, e) => s + e.count, 0);
+      document.getElementById('exceptionTotal').textContent = `共 ${totalExc} 次`;
+
+      if (stats.durationMs !== null) {
+        const mins = Math.round(stats.durationMs / 60000);
+        document.getElementById('duration').textContent = mins < 60 ? `${mins} 分钟` : `${(mins / 60).toFixed(1)} 小时`;
+        document.getElementById('durationDetail').textContent =
+          `${stats.startDate.toISOString().slice(0, 19)} → ${stats.endDate.toISOString().slice(0, 19)}`;
+      }
+
+      // Time range
+      if (stats.startDate && stats.endDate) {
+        document.getElementById('timeRange').textContent =
+          `${stats.startDate.toISOString().slice(0, 16)} → ${stats.endDate.toISOString().slice(0, 16)}`;
+      }
+
+      // Error timeline chart
+      if (timelineChartInstance) timelineChartInstance.destroy();
+      const tlCtx = document.getElementById('timelineChart').getContext('2d');
+      timelineChartInstance = new Chart(tlCtx, {
+        type: 'bar',
+        data: {
+          labels: stats.timeline.map(t => t.minute.slice(11)),
+          datasets: [{
+            label: 'ERROR 数',
+            data: stats.timeline.map(t => t.count),
+            backgroundColor: '#f8514966',
+            borderColor: '#f85149',
+            borderWidth: 1,
+            borderRadius: 3,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#8b949e', maxRotation: 45 }, grid: { color: '#21262d' } },
+            y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+          },
+        },
+      });
+
+      // Level distribution bars
+      const levelColors = { TRACE: '#484f58', DEBUG: '#7ee787', INFO: '#58a6ff', WARN: '#d29922', ERROR: '#f85149', FATAL: '#da3633' };
+      const levelBars = document.getElementById('levelBars');
+      levelBars.innerHTML = '';
+      const maxLevel = Math.max(...Object.values(stats.levels));
+      for (const [level, count] of Object.entries(stats.levels).sort((a, b) => b[1] - a[1])) {
+        const pct = maxLevel > 0 ? (count / maxLevel) * 100 : 0;
+        const realPct = stats.total > 0 ? ((count / stats.total) * 100).toFixed(1) : 0;
+        levelBars.innerHTML += `
+          <li class="level-bar-item">
+            <span class="level-label" style="color: ${levelColors[level] || '#8b949e'}">${level}</span>
+            <div class="level-bar-track">
+              <div class="level-bar-fill" style="width: ${pct}%; background: ${levelColors[level] || '#8b949e'}"></div>
+            </div>
+            <span class="level-count">${count.toLocaleString()} (${realPct}%)</span>
+          </li>`;
+      }
+
+      // Top exceptions
+      document.getElementById('exceptionBadge').textContent = `${stats.topExceptions.length} 种`;
+      const excList = document.getElementById('exceptionList');
+      excList.innerHTML = '';
+      for (const exc of stats.topExceptions.slice(0, 15)) {
+        excList.innerHTML += `
+          <li class="exception-item">
+            <div>
+              <div class="class-name">${escHtml(exc.className)}</div>
+              ${exc.sample ? `<div class="sample">${escHtml(exc.sample.slice(0, 120))}</div>` : ''}
+            </div>
+            <span class="count-badge">${exc.count}</span>
+          </li>`;
+      }
+
+      // Thread distribution chart
+      if (threadChartInstance) threadChartInstance.destroy();
+      const thCtx = document.getElementById('threadChart').getContext('2d');
+      const threadEntries = Object.entries(stats.threads).sort((a, b) => b[1] - a[1]);
+      const threadColors = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff', '#79c0ff', '#7ee787', '#8b949e'];
+      threadChartInstance = new Chart(thCtx, {
+        type: 'doughnut',
+        data: {
+          labels: threadEntries.map(([t]) => t),
+          datasets: [{
+            data: threadEntries.map(([, c]) => c),
+            backgroundColor: threadColors.slice(0, threadEntries.length),
+            borderColor: '#161b22',
+            borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { color: '#c9d1d9', padding: 12, font: { size: 12 } } },
+          },
+        },
+      });
+
+      // Raw log viewer
+      renderLogViewer(entries);
+      document.getElementById('logBadge').textContent = `${entries.length} 行`;
+
+      lastStats = stats;
+      document.getElementById('aiAnalyzeBtn').disabled = false;
+      document.getElementById('aiPanel').classList.add('hidden');
+    }
+
+    function collectExceptionSamples(entries, topExceptions) {
+      const wanted = new Set((topExceptions || []).slice(0, 5).map(e => e.className));
+      const samples = [];
+      for (const e of entries) {
+        if (!e.exceptionClass || !wanted.has(e.exceptionClass)) continue;
+        samples.push(e.fullMessage.split('\n').slice(0, 12).join('\n'));
+        if (samples.length >= 6) break;
+      }
+      return samples;
+    }
+
+    async function runAiAnalyze() {
+      if (!lastStats || !parsedEntries.length) return;
+      const panel = document.getElementById('aiPanel');
+      const status = document.getElementById('aiStatus');
+      const reportEl = document.getElementById('aiReport');
+      const badge = document.getElementById('aiSourceBadge');
+      const btn = document.getElementById('aiAnalyzeBtn');
+
+      panel.classList.remove('hidden');
+      badge.textContent = '';
+      badge.className = 'badge';
+      status.textContent = '正在调用 AI 分析异常，请稍候…';
+      reportEl.textContent = '';
+      btn.disabled = true;
+
+      const errCount = (lastStats.levels['ERROR'] || 0) + (lastStats.levels['FATAL'] || 0);
+      const payload = {
+        fileName: lastFileName,
+        totalEntries: lastStats.total,
+        errorCount: errCount,
+        topExceptions: lastStats.topExceptions.slice(0, 10),
+        samples: collectExceptionSamples(parsedEntries, lastStats.topExceptions),
+      };
+
+      try {
+        const res = await fetch('/log-viewer/api/ai-analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        badge.textContent = data.source === 'llm' ? '大模型' : '规则兜底';
+        badge.className = 'badge ' + (data.source === 'llm' ? 'llm' : 'rules');
+        status.textContent = data.source === 'llm' ? '分析完成（DeepSeek / 已配置模型）' : '分析完成（未调用到模型时使用规则研判）';
+        reportEl.textContent = data.report || '';
+      } catch (err) {
+        status.textContent = '分析失败：' + (err && err.message ? err.message : String(err));
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderLogViewer(entries) {
+      const viewer = document.getElementById('logViewer');
+      const keyword = document.getElementById('logSearch').value.toLowerCase();
+      const levelFilter = document.getElementById('logLevelFilter').value;
+
+      let html = '';
+      for (const e of entries) {
+        if (levelFilter && e.level !== levelFilter) continue;
+        if (keyword && !e.fullMessage.toLowerCase().includes(keyword)) continue;
+
+        const highlight = keyword && e.fullMessage.toLowerCase().includes(keyword) ? ' highlight' : '';
+        html += `<div class="log-line${highlight}">` +
+          `<span class="ts">${escHtml(e.timestamp)}</span> ` +
+          `[<span class="thread">${escHtml(e.thread)}</span>] ` +
+          `<span class="level-${e.level}">${e.level}</span> ` +
+          `<span class="logger">${escHtml(e.logger)}</span> - ` +
+          `<span class="msg">${escHtml(e.message)}</span>` +
+          `</div>`;
+
+        // Stacktrace lines (max 5)
+        const extraLines = e.fullMessage.split('\n').slice(1, 6);
+        for (const sl of extraLines) {
+          if (sl.trim()) {
+            html += `<div class="log-line stacktrace">${escHtml(sl)}</div>`;
+          }
+        }
+      }
+      viewer.innerHTML = html || '<div style="color:#484f58;text-align:center;padding:20px">无匹配日志</div>';
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ============================================================
+    // 文件加载
+    // ============================================================
+    function loadFile(file) {
+      lastFileName = file.name;
+      document.getElementById('uploadText').textContent = file.name;
+      document.getElementById('fileName').textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB — 解析中…`;
+      document.getElementById('dashboard').classList.add('hidden');
+      document.getElementById('emptyState').classList.add('hidden');
+      document.getElementById('aiAnalyzeBtn').disabled = true;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        setTimeout(() => {
+          parsedEntries = parseLog(e.target.result);
+          document.getElementById('fileName').textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB · 共解析稍后见仪表盘`;
+          renderDashboard(parsedEntries);
+          if (parsedEntries.length > 0) {
+            document.getElementById('fileName').textContent =
+              `${(file.size / 1024 / 1024).toFixed(2)} MB · ${parsedEntries.length.toLocaleString()} 条`;
+          }
+        }, 0);
+      };
+      reader.readAsText(file);
+    }
+
+    // ============================================================
+    // 事件绑定
+    // ============================================================
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+
+    document.getElementById('pickBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      fileInput.click();
+    });
+    uploadArea.addEventListener('click', (e) => {
+      if (e.target.id === 'aiAnalyzeBtn' || e.target.id === 'pickBtn') return;
+      fileInput.click();
+    });
+    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+    });
+
+    document.getElementById('aiAnalyzeBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      runAiAnalyze();
+    });
+
+    // Log viewer controls
+    document.getElementById('logSearch').addEventListener('input', () => renderLogViewer(parsedEntries));
+    document.getElementById('logLevelFilter').addEventListener('change', () => renderLogViewer(parsedEntries));
+  </script>
+</body>
+</html>
