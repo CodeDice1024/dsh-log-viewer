@@ -368,14 +368,12 @@ export function apply(ctx: Context) {
       return { report: ruleBasedAiReport(payload) + '\n\n> 提示：当前未配置可用模型，已使用规则研判。请在 DSH Settings → Models 填入 API Key。', source: 'rules' }
     }
 
-    // 优先用默认模型（settings 里的 sany 网关），不要误用 deepseek-official
+    // 只用当前会话选中的模型，没有则回退到规则研判
     const preferred = webCtx.get('agentDefaultModel')?.currentSelection()
     let provider = preferred?.provider
     let model = preferred?.model
     if (!provider || !providers.some(p => p.id === provider)) {
-      provider = providers.find(p => p.id === 'sany')?.id
-        ?? providers.find(p => p.id !== 'deepseek-official')?.id
-        ?? providers[0].id
+      return { report: ruleBasedAiReport(payload) + '\n\n> 当前会话未设置模型，已使用规则研判。请在对话中先选择模型。', source: 'rules' }
     }
     if (!model) {
       const models = await llm.listModels(provider)
