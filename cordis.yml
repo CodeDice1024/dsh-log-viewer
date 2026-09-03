@@ -1,0 +1,3 @@
+- insert:
+  - id: dsh-log-viewer
+    name: 'file:///D:/deepseek/deepseek-harness/scratch-plugin/dsh-log-viewer/src/index.ts'
