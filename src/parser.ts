@@ -49,6 +49,10 @@ export interface LogEntry {
   exceptionClass: string | null
   /** 异常消息（如果检测到） */
   exceptionMessage: string | null
+  /** 链路追踪 ID（如果检测到，如 Sleuth/Zipkin traceId） */
+  traceId: string | null
+  /** 链路 Span ID */
+  spanId: string | null
 }
 
 /** 日志分析汇总结果 */
@@ -149,6 +153,18 @@ export function classifyThread(thread: string): K8sThreadType {
   return 'unknown'
 }
 
+/** traceId/spanId 提取正则（Sleuth / Zipkin 格式：[traceId,spanId]，或 traceId=xxx,spanId=xxx） */
+const TRACE_PATTERN = /\[?(?:trace(?:_id)?|traceId)\s*[=:]\s*([a-f0-9]{16,32})(?:[,\s]+\s*(?:span(?:_id)?|spanId)\s*[=:]\s*([a-f0-9]{16}))?/i
+
+/**
+ * 从一行日志中提取 traceId 和 spanId
+ */
+function extractTraceIds(line: string): { traceId: string | null; spanId: string | null } {
+  const m = TRACE_PATTERN.exec(line)
+  if (m) return { traceId: m[1] ?? null, spanId: m[2] ?? null }
+  return { traceId: null, spanId: null }
+}
+
 /**
  * 尝试从一行文本中提取异常类名与消息
  */
@@ -234,6 +250,7 @@ export function parseLog(rawLog: string): LogEntry[] {
       if (current) entries.push(current)
 
       const { timestamp, thread, level, logger, line: lineNo, message } = match.groups
+      const traceIds = extractTraceIds(line)
 
       current = {
         timestamp,
@@ -248,6 +265,8 @@ export function parseLog(rawLog: string): LogEntry[] {
         isException: false,
         exceptionClass: null,
         exceptionMessage: null,
+        traceId: traceIds.traceId,
+        spanId: traceIds.spanId,
       }
 
       // 消息首行里就带异常类名（很常见）
@@ -531,4 +550,29 @@ export function formatExceptions(groups: Array<{ className: string; entries: Log
   }
 
   return lines.join('\n')
+}
+
+/**
+ * 按 traceId 对日志条目分组（链路追踪分析）
+ *
+ * @param entries - 日志条目数组
+ * @returns traceId 分组，按组内时间排序、按组大小降序
+ */
+export function groupByTrace(entries: LogEntry[]): Array<{ traceId: string; spanId: string | null; entries: LogEntry[] }> {
+  const groups = new Map<string, { traceId: string; spanId: string | null; entries: LogEntry[] }>()
+
+  for (const entry of entries) {
+    if (!entry.traceId) continue
+    const existing = groups.get(entry.traceId)
+    if (existing) {
+      existing.entries.push(entry)
+      if (entry.spanId) existing.spanId = entry.spanId
+    } else {
+      groups.set(entry.traceId, { traceId: entry.traceId, spanId: entry.spanId, entries: [entry] })
+    }
+  }
+
+  return Array.from(groups.values())
+    .map(g => ({ ...g, entries: g.entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp)) }))
+    .sort((a, b) => b.entries.length - a.entries.length)
 }
