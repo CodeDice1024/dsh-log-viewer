@@ -19,6 +19,7 @@ import {
   analyzeLog,
   searchLog,
   getExceptions,
+  groupByTrace,
   formatSummary,
   formatSearchResults,
   formatExceptions,
@@ -433,6 +434,85 @@ export function apply(ctx: Context) {
     return { report: text.trim(), source: 'llm' }
   }
 
+  /**
+   * AI 问答：用户勾选日志后提问
+   */
+  async function runLlmChat(
+    webCtx: Context,
+    payload: {
+      selectedLines: string[]
+      question: string
+      fileName?: string
+      totalEntries?: number
+    },
+  ): Promise<{ answer: string; source: 'llm' | 'rules' }> {
+    if (!payload.selectedLines?.length) {
+      return { answer: '请先勾选至少一条日志。', source: 'rules' }
+    }
+
+    const llm = webCtx.get('llm')
+    if (!llm) {
+      return { answer: '未配置 LLM 服务，无法回答。', source: 'rules' }
+    }
+
+    const providers = llm.listProviders()
+    if (providers.length === 0) {
+      return { answer: '当前未配置可用模型，请在 DSH Settings → Models 填入 API Key。', source: 'rules' }
+    }
+
+    const preferred = webCtx.get('agentDefaultModel')?.currentSelection()
+    let provider = preferred?.provider
+    let model = preferred?.model
+    if (!provider || !providers.some(p => p.id === provider)) {
+      return { answer: '当前会话未设置模型，请在对话中先选择模型。', source: 'rules' }
+    }
+    if (!model) {
+      const models = await llm.listModels(provider)
+      model = models[0]?.id
+    }
+    if (!model) {
+      return { answer: `提供商 ${provider} 没有可用模型。`, source: 'rules' }
+    }
+
+    const context = payload.selectedLines.slice(0, 30).join('\n---\n')
+    const prompt =
+      '用户从 Java 日志中筛选了以下日志行，请根据这些日志回答用户的问题。\n' +
+      '要求：\n' +
+      '1. 基于日志内容分析，不要编造日志中没有的信息\n' +
+      '2. 用中文回答，简洁清晰\n\n' +
+      `用户问题：${payload.question}\n\n` +
+      `日志内容（${payload.selectedLines.length} 条）：\n\`\`\`\n${context}\n\`\`\``
+
+    const message = createUserMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'plugin', plugin: 'dsh-log-viewer' },
+    })
+
+    let text = ''
+    try {
+      for await (const chunk of llm.stream({
+        provider,
+        model,
+        system: 'You analyze Java log lines and answer questions. Reply in concise Chinese.',
+        messages: [message],
+        maxTokens: 2048,
+      })) {
+        if (chunk.type === 'text-delta') text += chunk.text
+        if (chunk.type === 'finish' && chunk.reason.kind === 'error') {
+          throw new Error(chunk.reason.failure?.message ?? 'llm finish with error')
+        }
+      }
+    } catch (err) {
+      return {
+        answer: `AI 调用失败：${err instanceof Error ? err.message : String(err)}`,
+        source: 'rules',
+      }
+    }
+
+    if (!text.trim()) return { answer: '模型返回为空。', source: 'rules' }
+    return { answer: text.trim(), source: 'llm' }
+  }
+
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'prefix',
@@ -454,6 +534,26 @@ export function apply(ctx: Context) {
             }
             const result = await runLlmExceptionAnalysis(webCtx, payload)
             jsonResponse(res, 200, result)
+          } catch (err) {
+            jsonResponse(res, 500, {
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+          return
+        }
+
+        // POST /log-viewer/api/ai-chat — 勾选日志后 AI 问答
+        if (pathname === '/log-viewer/api/ai-chat' && req.method === 'POST') {
+          try {
+            const raw = await readRequestBody(req)
+            const payload = JSON.parse(raw || '{}') as {
+              selectedLines: string[]
+              question: string
+              fileName?: string
+              totalEntries?: number
+            }
+            const chatResult = await runLlmChat(webCtx, payload)
+            jsonResponse(res, 200, chatResult)
           } catch (err) {
             jsonResponse(res, 500, {
               error: err instanceof Error ? err.message : String(err),
